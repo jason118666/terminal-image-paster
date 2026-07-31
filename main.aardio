@@ -1,20 +1,94 @@
 import win.ui;
 /*DSG{{*/
-mainForm = win.form(text="终端贴图";right=250;bottom=82;maxbox=0;sizebox=0)
+mainForm = win.form(text="终端贴图";right=250;bottom=110;bgcolor=0xFAF7F4;border="none";max=false;min=true)
 mainForm.add(
-listenButton={cls="plus";text="开始监听";left=75;top=10;right=175;bottom=38;bgcolor=0xE6E6E6;color=0x333333;font=LOGFONT(h=-13);notify=1;z=1};
-record={cls="plus";left=6;top=48;right=244;bottom=68;color=0x555555;font=LOGFONT(h=-11);transparent=1;z=2}
+titleBackground={cls="bk";left=0;top=0;right=250;bottom=30;bgcolor=0xF8F2EA;dl=1;dr=1;dt=1;z=1};
+titleText={cls="bkplus";text="终端贴图";left=12;top=0;right=112;bottom=30;align="left";color=0x685344;font=LOGFONT(h=-13;weight=600);z=2};
+titleDivider={cls="bk";left=0;top=29;right=250;bottom=30;bgcolor=0xF0E5D9;dl=1;dr=1;dt=1;z=3};
+listenButton={cls="plus";text="开始监听";left=75;top=40;right=175;bottom=68;bgcolor=0xFBF1E8;border={color=0xFFCDDEEF;radius=7;width=1};color=0x835A24;font=LOGFONT(h=-13);notify=1;z=4};
+record={cls="plus";left=6;top=78;right=244;bottom=98;color=0x8B7464;font=LOGFONT(h=-11);transparent=1;z=5}
 )
 /*}}*/
+
+import win.region.round;
+import win.ui.simpleWindow2;
+win.region.round(mainForm);
+var windowChrome = win.ui.simpleWindow2(mainForm);
+windowChrome.skin({
+	background={
+		default=0x00000000;
+		hover=0xFFDCEBFA;
+		active=0xFFCDDFF3
+	};
+	color={
+		default=0xFF445F75;
+		hover=0xFF245A83;
+		active=0xFF123F62
+	}
+})
+windowChrome.titlebarClose.skin({
+	background={
+		default=0x00000000;
+		hover=0xFFFBE7E6;
+		active=0xFFF5D2D0
+	};
+	color={
+		default=0xFF445F75;
+		hover=0xFFA33A35;
+		active=0xFF7D2925
+	}
+})
+
+mainForm.listenButton.skin({
+	background={
+		default=0xFFE8F1FB;
+		hover=0xFFDCEBFA;
+		active=0xFFCDDFF3
+	};
+	color={
+		default=0xFF245A83;
+		hover=0xFF174E78;
+		active=0xFF123F62
+	};
+	border={
+		default={color=0xFFCDDEEF;radius=7;width=1};
+		hover={color=0xFFAAC9E8;radius=7;width=1};
+		active={color=0xFF8DB5DD;radius=7;width=1}
+	}
+})
 
 import key.hotkey;
 import key;
 import process;
 import win.clip;
 import win.clip.bitmap;
+import win.ui.menu;
+import win.util.tray;
 import console;
 
 var hotkey;
+var isExiting = false;
+var tray = win.util.tray(mainForm);
+tray.tip = "终端贴图";
+
+mainForm.onTrayMessage = {
+	[0x205/*_WM_RBUTTONUP*/] = function(wParam){
+		win.setForeground(mainForm.hwnd,true);
+		var menu = win.ui.popmenu(mainForm);
+		menu.add("显示窗口",function(){
+			mainForm.show(true);
+			win.setForeground(mainForm.hwnd);
+		});
+		menu.add();
+		menu.add("退出",function(){
+			isExiting = true;
+			mainForm.close();
+		});
+		menu.popup();
+		menu.close();
+	};
+}
+
 var debugLog = function(...){
 	if(_STUDIO_INVOKED) console.log(...);
 }
@@ -125,8 +199,15 @@ mainForm.listenButton.oncommand = function(){
 	else startListening();
 }
 
+mainForm.onClose = function(){
+	if(isExiting) return true;
+	mainForm.show(false);
+	return false;
+}
+
 mainForm.onDestroy = function(){
 	stopListening();
+	tray.delete();
 }
 
 mainForm.show();

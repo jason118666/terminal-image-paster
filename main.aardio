@@ -1,12 +1,12 @@
 import win.ui;
 /*DSG{{*/
-mainForm = win.form(text="终端贴图";right=250;bottom=110;bgcolor=0xFAF7F4;border="none";max=false;min=true)
+mainForm = win.form(text="终端贴图";right=250;bottom=110;bgcolor=0xFAF7F4;border="none";max=false)
 mainForm.add(
+listenButton={cls="plus";text="开始监听";left=75;top=40;right=175;bottom=68;bgcolor=0xFBF1E8;border={color=0xEFDECD;radius=7;width=1};color=0x835A24;font=LOGFONT(h=-13);notify=1;z=4};
+record={cls="plus";left=6;top=78;right=244;bottom=98;color=0x8B7464;font=LOGFONT(h=-11);transparent=1;z=5};
 titleBackground={cls="bk";left=0;top=0;right=250;bottom=30;bgcolor=0xF8F2EA;dl=1;dr=1;dt=1;z=1};
-titleText={cls="bkplus";text="终端贴图";left=12;top=0;right=112;bottom=30;align="left";color=0x685344;font=LOGFONT(h=-13;weight=600);z=2};
 titleDivider={cls="bk";left=0;top=29;right=250;bottom=30;bgcolor=0xF0E5D9;dl=1;dr=1;dt=1;z=3};
-listenButton={cls="plus";text="开始监听";left=75;top=40;right=175;bottom=68;bgcolor=0xFBF1E8;border={color=0xFFCDDEEF;radius=7;width=1};color=0x835A24;font=LOGFONT(h=-13);notify=1;z=4};
-record={cls="plus";left=6;top=78;right=244;bottom=98;color=0x8B7464;font=LOGFONT(h=-11);transparent=1;z=5}
+titleText={cls="bkplus";text="终端贴图";left=12;top=0;right=112;bottom=30;align="left";color=0x685344;font=LOGFONT(h=-13;weight=600);z=2}
 )
 /*}}*/
 
@@ -68,24 +68,49 @@ import console;
 
 var hotkey;
 var isExiting = false;
+var logError = function(stage,err){
+	try{
+		var now = time();
+		if(!io.createDir("/log")) return;
+		var file = io.file(io.fullpath("/log/" + now.format("%Y%m%d") + ".log"),"a");
+		if(!file) return;
+		file.write(now.format("%Y-%m-%d %H:%M:%S")," [",stage,"] ",err ? tostring(err) : "未知错误","\r\n");
+		file.close();
+	}
+	catch(logErr){}
+}
+
 var tray = win.util.tray(mainForm);
 tray.tip = "终端贴图";
 
 mainForm.onTrayMessage = {
 	[0x205/*_WM_RBUTTONUP*/] = function(wParam){
-		win.setForeground(mainForm.hwnd,true);
-		var menu = win.ui.popmenu(mainForm);
-		menu.add("显示窗口",function(){
-			mainForm.show(true);
-			win.setForeground(mainForm.hwnd);
-		});
-		menu.add();
-		menu.add("退出",function(){
-			isExiting = true;
-			mainForm.close();
-		});
-		menu.popup();
-		menu.close();
+		var menu;
+		try{
+			win.setForeground(mainForm.hwnd,true);
+			menu = win.ui.popmenu(mainForm);
+			menu.add("显示窗口",function(){
+				mainForm.show(true);
+				win.setForeground(mainForm.hwnd);
+			});
+			menu.add();
+			menu.add("退出",function(){
+				isExiting = true;
+				mainForm.close();
+			});
+			menu.popup();
+		}
+		catch(err){
+			logError("托盘菜单",err);
+		}
+		if(menu){
+			try{
+				menu.close();
+			}
+			catch(err){
+				logError("关闭托盘菜单",err);
+			}
+		}
 	};
 }
 
@@ -116,78 +141,138 @@ var isWindowsTerminal = function(hwnd){
 }
 
 var saveClipboardImage = function(){
-	debugLog("[转换] 开始读取剪贴板图片");
-	var bitmap = win.clip.bitmap.read();
-	if(!bitmap){
-		debugLog("[转换] 读取剪贴板图片失败");
-		return addRecord(time().format("%m-%d %H:%M:%S") + "丨读取失败");
-	}
+	var bitmap;
+	try{
+		debugLog("[转换] 开始读取剪贴板图片");
+		bitmap = win.clip.bitmap.read();
+		if(!bitmap){
+			debugLog("[转换] 读取剪贴板图片失败");
+			logError("读取剪贴板图片","剪贴板图片已不可用");
+			return addRecord(time().format("%m-%d %H:%M:%S") + "丨读取失败");
+		}
 
-	var now = time();
-	var dir = "/img/" + now.format("%Y%m%d");
-	if(!io.createDir(dir)){
+		var now = time();
+		var dir = "/img/" + now.format("%Y%m%d");
+		if(!io.createDir(dir)){
+			bitmap.dispose();
+			bitmap = null;
+			debugLog("[转换] 创建目录失败:",io.fullpath(dir));
+			logError("创建图片目录",io.fullpath(dir));
+			return addRecord(now.format("%m-%d %H:%M:%S") + "丨保存失败");
+		}
+
+		var stem = now.format("%Y%m%d%H%M%S");
+		var filename = stem + ".jpg";
+		var path = io.fullpath(dir + "/" + filename);
+		var index = 1;
+		while(io.exist(path)){
+			filename = stem + "_" + index + ".jpg";
+			path = io.fullpath(dir + "/" + filename);
+			index++;
+		}
+
+		var ok,err = bitmap.save(path,90);
 		bitmap.dispose();
-		debugLog("[转换] 创建目录失败:",io.fullpath(dir));
-		return addRecord(now.format("%m-%d %H:%M:%S") + "丨保存失败");
-	}
+		bitmap = null;
+		if(!ok){
+			debugLog("[转换] JPG 保存失败:",path,err);
+			logError("保存 JPG",err);
+			return addRecord(now.format("%m-%d %H:%M:%S") + "丨保存失败");
+		}
+		debugLog("[转换] JPG 保存成功:",path);
 
-	var stem = now.format("%Y%m%d%H%M%S");
-	var filename = stem + ".jpg";
-	var path = io.fullpath(dir + "/" + filename);
-	var index = 1;
-	while(io.exist(path)){
-		filename = stem + "_" + index + ".jpg";
-		path = io.fullpath(dir + "/" + filename);
-		index++;
+		if(!win.clip.write(path)){
+			debugLog("[转换] 写入路径到剪贴板失败");
+			logError("写入剪贴板",path);
+			return addRecord(now.format("%m-%d %H:%M:%S") + "丨剪贴板失败");
+		}
+		addRecord(now.format("%m-%d %H:%M:%S") + "丨" + filename);
+		debugLog("[转换] 已写入剪贴板，等待原 Ctrl+V 释放");
+		key.waitUp("V");
+		key.waitUp("CTRL");
+		win.delay(30);
+		debugLog("[转换] 原按键已释放，准备发送 Ctrl+V");
+		key.combine("CTRL","V");
+		debugLog("[转换] Ctrl+V 已发送");
 	}
-
-	var ok,err = bitmap.save(path,90);
-	bitmap.dispose();
-	if(!ok){
-		debugLog("[转换] JPG 保存失败:",path,err);
-		return addRecord(now.format("%m-%d %H:%M:%S") + "丨保存失败");
+	catch(err){
+		if(bitmap){
+			try{
+				bitmap.dispose();
+			}
+			catch(disposeErr){
+				logError("释放图片资源",disposeErr);
+			}
+		}
+		debugLog("[转换] 处理异常:",err);
+		logError("图片转换",err);
+		addRecord(time().format("%m-%d %H:%M:%S") + "丨处理失败");
 	}
-	debugLog("[转换] JPG 保存成功:",path);
-
-	if(!win.clip.write(path)){
-		debugLog("[转换] 写入路径到剪贴板失败");
-		return addRecord(now.format("%m-%d %H:%M:%S") + "丨剪贴板失败");
-	}
-	addRecord(now.format("%m-%d %H:%M:%S") + "丨" + filename);
-	debugLog("[转换] 已写入剪贴板，等待原 Ctrl+V 释放");
-	key.waitUp("V");
-	key.waitUp("CTRL");
-	win.delay(30);
-	debugLog("[转换] 原按键已释放，准备发送 Ctrl+V");
-	key.combine("CTRL","V");
-	debugLog("[转换] Ctrl+V 已发送");
 }
 
 var startListening = function(){
-	debugLog("[监听] 正在创建热键对象");
-	hotkey = key.hotkey();
-	debugLog("[监听] 热键对象已创建，正在注册 Ctrl+V");
-	hotkey.regStr("CTRL+V",function(hwnd){
-		debugLog("[热键] 捕获 Ctrl+V");
-		var terminalOk = isWindowsTerminal(hwnd);
-		var imageOk = win.clip.bitmap.test();
-		debugLog("[判断] Windows Terminal:",terminalOk,"剪贴板图片:",imageOk);
-		if(!terminalOk || !imageOk){
-			debugLog("[热键] 条件不满足，放行原 Ctrl+V");
-			return true;
+	var newHotkey;
+	try{
+		debugLog("[监听] 正在创建热键对象");
+		newHotkey = key.hotkey();
+		debugLog("[监听] 热键对象已创建，正在注册 Ctrl+V");
+		newHotkey.regStr("CTRL+V",function(hwnd){
+			var send = true;
+			try{
+				debugLog("[热键] 捕获 Ctrl+V");
+				var terminalOk = isWindowsTerminal(hwnd);
+				var imageOk = win.clip.bitmap.test();
+				debugLog("[判断] Windows Terminal:",terminalOk,"剪贴板图片:",imageOk);
+				if(!terminalOk || !imageOk){
+					debugLog("[热键] 条件不满足，放行原 Ctrl+V");
+				}
+				else{
+					debugLog("[热键] 条件满足，拦截并开始转换");
+					send = saveClipboardImage;
+				}
+			}
+			catch(err){
+				debugLog("[热键] 判断异常:",err);
+				logError("判断粘贴条件",err);
+			}
+			return send;
+		});
+		hotkey = newHotkey;
+		debugLog("[监听] Ctrl+V 注册完成");
+		mainForm.listenButton.text = "停止监听";
+		debugLog("[监听] 已开始");
+	}
+	catch(err){
+		if(newHotkey){
+			try{
+				newHotkey.close();
+			}
+			catch(closeErr){
+				logError("清理监听",closeErr);
+			}
 		}
-		debugLog("[热键] 条件满足，拦截并开始转换");
-		return saveClipboardImage;
-	});
-	debugLog("[监听] Ctrl+V 注册完成");
-	mainForm.listenButton.text = "停止监听";
-	debugLog("[监听] 已开始");
+		hotkey = null;
+		mainForm.listenButton.text = "开始监听";
+		debugLog("[监听] 启动失败:",err);
+		logError("启动监听",err);
+		addRecord(time().format("%m-%d %H:%M:%S") + "丨监听失败");
+	}
 }
 
 var stopListening = function(){
 	if(hotkey){
-		hotkey.close();
-		hotkey = null;
+		var currentHotkey = hotkey;
+		var closeError;
+		try{
+			currentHotkey.close();
+			hotkey = null;
+		}
+		catch(err){
+			closeError = err;
+			debugLog("[监听] 停止失败:",err);
+			logError("停止监听",err);
+		}
+		if(closeError) return addRecord(time().format("%m-%d %H:%M:%S") + "丨停止失败");
 	}
 	mainForm.listenButton.text = "开始监听";
 	debugLog("[监听] 已停止");
@@ -207,7 +292,12 @@ mainForm.onClose = function(){
 
 mainForm.onDestroy = function(){
 	stopListening();
-	tray.delete();
+	try{
+		tray.delete();
+	}
+	catch(err){
+		logError("删除托盘图标",err);
+	}
 }
 
 mainForm.show();

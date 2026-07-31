@@ -1,0 +1,133 @@
+import win.ui;
+/*DSG{{*/
+mainForm = win.form(text="终端贴图";right=250;bottom=82;maxbox=0;sizebox=0)
+mainForm.add(
+listenButton={cls="plus";text="开始监听";left=75;top=10;right=175;bottom=38;bgcolor=0xE6E6E6;color=0x333333;font=LOGFONT(h=-13);notify=1;z=1};
+record={cls="plus";left=6;top=48;right=244;bottom=68;color=0x555555;font=LOGFONT(h=-11);transparent=1;z=2}
+)
+/*}}*/
+
+import key.hotkey;
+import key;
+import process;
+import win.clip;
+import win.clip.bitmap;
+import console;
+
+var hotkey;
+var debugLog = function(...){
+	if(_STUDIO_INVOKED) console.log(...);
+}
+
+if(_STUDIO_INVOKED){
+	console.open();
+	debugLog("[终端贴图] 调试启动");
+}
+
+var addRecord = function(text){
+	mainForm.record.text = text;
+}
+
+var isWindowsTerminal = function(hwnd){
+	var pid = {INT value};
+	if(!::User32.GetWindowThreadProcessId(hwnd,pid)){
+		debugLog("[窗口] 无法读取焦点窗口进程，hwnd:",hwnd);
+		return false;
+	}
+	var path = process.getPath(pid.value);
+	debugLog("[窗口] 焦点窗口:",hwnd,"进程:",path : "<无法读取>");
+	if(!path) return false;
+	return string.endsWith(path,"WindowsTerminal.exe",true)
+		|| string.endsWith(path,"wt.exe",true);
+}
+
+var saveClipboardImage = function(){
+	debugLog("[转换] 开始读取剪贴板图片");
+	var bitmap = win.clip.bitmap.read();
+	if(!bitmap){
+		debugLog("[转换] 读取剪贴板图片失败");
+		return addRecord(time().format("%m-%d %H:%M:%S") + "丨读取失败");
+	}
+
+	var now = time();
+	var dir = "/img/" + now.format("%Y%m%d");
+	if(!io.createDir(dir)){
+		bitmap.dispose();
+		debugLog("[转换] 创建目录失败:",io.fullpath(dir));
+		return addRecord(now.format("%m-%d %H:%M:%S") + "丨保存失败");
+	}
+
+	var stem = now.format("%Y%m%d%H%M%S");
+	var filename = stem + ".jpg";
+	var path = io.fullpath(dir + "/" + filename);
+	var index = 1;
+	while(io.exist(path)){
+		filename = stem + "_" + index + ".jpg";
+		path = io.fullpath(dir + "/" + filename);
+		index++;
+	}
+
+	var ok,err = bitmap.save(path,90);
+	bitmap.dispose();
+	if(!ok){
+		debugLog("[转换] JPG 保存失败:",path,err);
+		return addRecord(now.format("%m-%d %H:%M:%S") + "丨保存失败");
+	}
+	debugLog("[转换] JPG 保存成功:",path);
+
+	if(!win.clip.write(path)){
+		debugLog("[转换] 写入路径到剪贴板失败");
+		return addRecord(now.format("%m-%d %H:%M:%S") + "丨剪贴板失败");
+	}
+	addRecord(now.format("%m-%d %H:%M:%S") + "丨" + filename);
+	debugLog("[转换] 已写入剪贴板，等待原 Ctrl+V 释放");
+	key.waitUp("V");
+	key.waitUp("CTRL");
+	win.delay(30);
+	debugLog("[转换] 原按键已释放，准备发送 Ctrl+V");
+	key.combine("CTRL","V");
+	debugLog("[转换] Ctrl+V 已发送");
+}
+
+var startListening = function(){
+	debugLog("[监听] 正在创建热键对象");
+	hotkey = key.hotkey();
+	debugLog("[监听] 热键对象已创建，正在注册 Ctrl+V");
+	hotkey.regStr("CTRL+V",function(hwnd){
+		debugLog("[热键] 捕获 Ctrl+V");
+		var terminalOk = isWindowsTerminal(hwnd);
+		var imageOk = win.clip.bitmap.test();
+		debugLog("[判断] Windows Terminal:",terminalOk,"剪贴板图片:",imageOk);
+		if(!terminalOk || !imageOk){
+			debugLog("[热键] 条件不满足，放行原 Ctrl+V");
+			return true;
+		}
+		debugLog("[热键] 条件满足，拦截并开始转换");
+		return saveClipboardImage;
+	});
+	debugLog("[监听] Ctrl+V 注册完成");
+	mainForm.listenButton.text = "停止监听";
+	debugLog("[监听] 已开始");
+}
+
+var stopListening = function(){
+	if(hotkey){
+		hotkey.close();
+		hotkey = null;
+	}
+	mainForm.listenButton.text = "开始监听";
+	debugLog("[监听] 已停止");
+}
+
+mainForm.listenButton.oncommand = function(){
+	debugLog("[界面] 监听按钮已点击");
+	if(hotkey) stopListening();
+	else startListening();
+}
+
+mainForm.onDestroy = function(){
+	stopListening();
+}
+
+mainForm.show();
+return win.loopMessage();

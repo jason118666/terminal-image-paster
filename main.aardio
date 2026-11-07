@@ -1,9 +1,12 @@
 import win.ui;
 /*DSG{{*/
-mainForm = win.form(text="终端贴图";right=250;bottom=110;bgcolor=0xFAF7F4;border="none";max=false)
+mainForm = win.form(text="终端贴图";right=250;bottom=120;bgcolor=0xFAF7F4;border="none";max=false)
 mainForm.add(
-listenButton={cls="plus";text="开始监听";left=75;top=40;right=175;bottom=68;bgcolor=0xFBF1E8;border={color=0xEFDECD;radius=7;width=1};color=0x835A24;font=LOGFONT(h=-13);notify=1;z=4};
-record={cls="plus";left=6;top=78;right=244;bottom=98;color=0x8B7464;font=LOGFONT(h=-11);transparent=1;z=5};
+feishuLabel={cls="plus";text="飞书三击@助手";left=16;top=70;right=170;bottom=92;align="left";color=0x685344;font=LOGFONT(h=-12);transparent=1;z=6};
+feishuToggle={cls="plus";text="已禁用";left=186;top=70;right=238;bottom=92;bgcolor=0xFBF1E8;border={color=0xEFDECD;radius=5;width=1};color=0x835A24;font=LOGFONT(h=-12);notify=1;z=7};
+record={cls="plus";left=6;top=96;right=244;bottom=116;color=0x8B7464;font=LOGFONT(h=-11);transparent=1;z=8};
+terminalLabel={cls="plus";text="终端贴图";left=16;top=40;right=170;bottom=62;align="left";color=0x685344;font=LOGFONT(h=-12);transparent=1;z=4};
+terminalToggle={cls="plus";text="已禁用";left=186;top=40;right=238;bottom=62;bgcolor=0xFBF1E8;border={color=0xEFDECD;radius=5;width=1};color=0x835A24;font=LOGFONT(h=-12);notify=1;z=5};
 titleBackground={cls="bk";left=0;top=0;right=250;bottom=30;bgcolor=0xF8F2EA;dl=1;dr=1;dt=1;z=1};
 titleDivider={cls="bk";left=0;top=29;right=250;bottom=30;bgcolor=0xF0E5D9;dl=1;dr=1;dt=1;z=3};
 titleText={cls="bkplus";text="终端贴图";left=12;top=0;right=112;bottom=30;align="left";color=0x685344;font=LOGFONT(h=-13;weight=600);z=2}
@@ -39,26 +42,37 @@ windowChrome.titlebarClose.skin({
 	}
 })
 
-mainForm.listenButton.skin({
-	background={
-		default=0xFFE8F1FB;
-		hover=0xFFDCEBFA;
-		active=0xFFCDDFF3
-	};
-	color={
-		default=0xFF245A83;
-		hover=0xFF174E78;
-		active=0xFF123F62
-	};
-	border={
-		default={color=0xFFCDDEEF;radius=7;width=1};
-		hover={color=0xFFAAC9E8;radius=7;width=1};
-		active={color=0xFF8DB5DD;radius=7;width=1}
+var toggleSkin = function(background,color,border){
+	return {
+		background={default=background[1];hover=background[2];active=background[3]};
+		color={default=color[1];hover=color[2];active=color[3]};
+		border={
+			default={color=border[1];radius=5;width=1};
+			hover={color=border[2];radius=5;width=1};
+			active={color=border[3];radius=5;width=1}
+		}
 	}
-})
+}
+
+var enabledBackground = {0xFFE8F1FB,0xFFDCEBFA,0xFFCDDFF3};
+var enabledColor = {0xFF245A83,0xFF174E78,0xFF123F62};
+var enabledBorder = {0xFFCDDEEF,0xFFAAC9E8,0xFF8DB5DD};
+var disabledBackground = {0xFFEEF1F4,0xFFE4E8ED,0xFFD8DEE5};
+var disabledColor = {0xFF64748B,0xFF475569,0xFF334155};
+var disabledBorder = {0xFFD5DCE4,0xFFC3CCD6,0xFFB0BBC8};
+
+var setToggleState = function(toggle,enabled){
+	toggle.text = enabled ? "已启用" : "已禁用";
+	toggle.skin(enabled ? toggleSkin(enabledBackground,enabledColor,enabledBorder) : toggleSkin(disabledBackground,disabledColor,disabledBorder));
+}
+setToggleState(mainForm.terminalToggle,false);
+setToggleState(mainForm.feishuToggle,false);
 
 import key.hotkey;
 import key;
+import mouse.hook;
+import JSON;
+import System.Windows.Automation.3;
 import process;
 import win.clip;
 import win.clip.bitmap;
@@ -127,23 +141,35 @@ var addRecord = function(text){
 	mainForm.record.text = text;
 }
 
-var isWindowsTerminal = function(hwnd){
+var getWindowProcessPath = function(hwnd){
 	var pid = {INT value};
 	if(!::User32.GetWindowThreadProcessId(hwnd,pid)){
 		debugLog("[窗口] 无法读取焦点窗口进程，hwnd:",hwnd);
-		return false;
+		return null;
 	}
-	var path = process.getPath(pid.value);
-	debugLog("[窗口] 焦点窗口:",hwnd,"进程:",path : "<无法读取>");
+	return process.getPath(pid.value);
+}
+
+var isWindowsTerminal = function(hwnd){
+	var path = getWindowProcessPath(hwnd);
+	//debugLog("[窗口] 焦点窗口:",hwnd,"进程:",path : "<无法读取>");
 	if(!path) return false;
 	return string.endsWith(path,"WindowsTerminal.exe",true)
 		|| string.endsWith(path,"wt.exe",true);
 }
 
+var isFeishu = function(hwnd){
+	var path = getWindowProcessPath(hwnd);
+	//debugLog("[窗口] 前台窗口:",hwnd,"进程:",path : "<无法读取>");
+	if(!path) return false;
+	return string.endsWith(path,"Feishu.exe",true)
+		|| string.endsWith(path,"Lark.exe",true);
+}
+
 var saveClipboardImage = function(){
 	var bitmap;
 	try{
-		debugLog("[转换] 开始读取剪贴板图片");
+		//debugLog("[转换] 开始读取剪贴板图片");
 		bitmap = win.clip.bitmap.read();
 		if(!bitmap){
 			debugLog("[转换] 读取剪贴板图片失败");
@@ -187,13 +213,13 @@ var saveClipboardImage = function(){
 			return addRecord(now.format("%m-%d %H:%M:%S") + "丨剪贴板失败");
 		}
 		addRecord(now.format("%m-%d %H:%M:%S") + "丨" + filename);
-		debugLog("[转换] 已写入剪贴板，等待原 Ctrl+V 释放");
+		//debugLog("[转换] 已写入剪贴板，等待原 Ctrl+V 释放");
 		key.waitUp("V");
 		key.waitUp("CTRL");
 		win.delay(30);
-		debugLog("[转换] 原按键已释放，准备发送 Ctrl+V");
+		//debugLog("[转换] 原按键已释放，准备发送 Ctrl+V");
 		key.combine("CTRL","V");
-		debugLog("[转换] Ctrl+V 已发送");
+		//debugLog("[转换] Ctrl+V 已发送");
 	}
 	catch(err){
 		if(bitmap){
@@ -213,18 +239,18 @@ var saveClipboardImage = function(){
 var startListening = function(){
 	var newHotkey;
 	try{
-		debugLog("[监听] 正在创建热键对象");
+		//debugLog("[监听] 正在创建热键对象");
 		newHotkey = key.hotkey();
-		debugLog("[监听] 热键对象已创建，正在注册 Ctrl+V");
+		//debugLog("[监听] 热键对象已创建，正在注册 Ctrl+V");
 		newHotkey.regStr("CTRL+V",function(hwnd){
 			var send = true;
 			try{
-				debugLog("[热键] 捕获 Ctrl+V");
+				//debugLog("[热键] 捕获 Ctrl+V");
 				var terminalOk = isWindowsTerminal(hwnd);
 				var imageOk = win.clip.bitmap.test();
-				debugLog("[判断] Windows Terminal:",terminalOk,"剪贴板图片:",imageOk);
+				//debugLog("[判断] Windows Terminal:",terminalOk,"剪贴板图片:",imageOk);
 				if(!terminalOk || !imageOk){
-					debugLog("[热键] 条件不满足，放行原 Ctrl+V");
+					//debugLog("[热键] 条件不满足，放行原 Ctrl+V");
 				}
 				else{
 					debugLog("[热键] 条件满足，拦截并开始转换");
@@ -238,8 +264,8 @@ var startListening = function(){
 			return send;
 		});
 		hotkey = newHotkey;
-		debugLog("[监听] Ctrl+V 注册完成");
-		mainForm.listenButton.text = "停止监听";
+		//debugLog("[监听] Ctrl+V 注册完成");
+		setToggleState(mainForm.terminalToggle,true);
 		debugLog("[监听] 已开始");
 	}
 	catch(err){
@@ -252,7 +278,7 @@ var startListening = function(){
 			}
 		}
 		hotkey = null;
-		mainForm.listenButton.text = "开始监听";
+		setToggleState(mainForm.terminalToggle,false);
 		debugLog("[监听] 启动失败:",err);
 		logError("启动监听",err);
 		addRecord(time().format("%m-%d %H:%M:%S") + "丨监听失败");
@@ -274,14 +300,207 @@ var stopListening = function(){
 		}
 		if(closeError) return addRecord(time().format("%m-%d %H:%M:%S") + "丨停止失败");
 	}
-	mainForm.listenButton.text = "开始监听";
+	setToggleState(mainForm.terminalToggle,false);
 	debugLog("[监听] 已停止");
 }
 
-mainForm.listenButton.oncommand = function(){
-	debugLog("[界面] 监听按钮已点击");
+mainForm.terminalToggle.oncommand = function(){
+	//debugLog("[界面] 终端贴图开关已点击");
 	if(hotkey) stopListening();
 	else startListening();
+}
+
+//飞书三击 @ 助手：鼠标钩子统计左键连击，三击后检测焦点是否在输入框，是则输入 @ 文本并回车
+
+//飞书输入框在 UIA 中是类名含此字符串的 Group
+var FEISHU_EDITOR_CLASS = "editor-kit-container";
+//三击后等多久再检测焦点（毫秒），要等飞书先处理完这次点击
+var FEISHU_CLICK_DELAY = 80;
+//首次检测失败后的补测间隔（毫秒），飞书的无障碍树首次被访问时可能还没就绪
+var FEISHU_RETRY_DELAY = 300;
+
+//配置文件 config.json 位于程序目录，缺失时按默认值生成，修改后下次三击即生效
+var CONFIG_PATH = "/config.json";
+var DEFAULT_CONFIG = {
+	feishu = {
+		mentionName = "嘉胜的智能助手";
+		autoConfirm = true;
+		confirmDelay = 200
+	}
+}
+
+//返回要输入的文本、是否自动回车、回车延时，读不出来的项用默认值
+var loadFeishuConfig = function(){
+	var path = io.fullpath(CONFIG_PATH);
+	var feishu;
+	try{
+		if(!io.exist(path)){
+			string.save(path,JSON.stringify(DEFAULT_CONFIG,true));
+		}
+		var cfg,err = JSON.load(path);
+		if(!cfg){
+			logError("解析配置文件",err);
+		}
+		else feishu = cfg[["feishu"]];
+	}
+	catch(err){
+		logError("读取配置文件",err);
+	}
+
+	var name = feishu && feishu[["mentionName"]];
+	var confirm = feishu && feishu[["autoConfirm"]];
+	var delay = feishu && feishu[["confirmDelay"]];
+	name = type(name) == "string" ? string.trim(name) : "";
+	if(name[1] == '@'#) name = string.slice(name,2);
+	if(!#name) name = DEFAULT_CONFIG.feishu.mentionName;
+	if(type(delay) != "number" || delay < 0) delay = DEFAULT_CONFIG.feishu.confirmDelay;
+	return "@" + name,confirm === true,delay;
+}
+
+var Automation = System.Windows.Automation;
+var AutomationElement = Automation.AutomationElement;
+var unhookWindowsHookEx = ::User32.api("UnhookWindowsHookEx","int(pointer hhk)");
+
+var mouseHook;
+//输入与回车尚未走完时为 true，期间的三击一律忽略，避免重叠触发导致多按回车
+var mentioning = false;
+var clickCount = 0;
+var lastClickTime,lastClickX,lastClickY;
+
+//焦点可能落在输入框内部的子节点上，所以从焦点元素向上最多找 5 层
+var isFeishuEditorFocused = function(){
+	var ele = AutomationElement.RootElement.FocusedElement;
+	for(i=1;5;1){
+		if(!ele) return false;
+		var className = ele.Current.ClassName;
+		//debugLog("[飞书][UIA] 第" + i + "层 类名:",className,"名称:",ele.Current.Name,"进程:",ele.Current.ProcessId);
+		if(className && string.indexOf(className,FEISHU_EDITOR_CLASS)) return true;
+		ele = Automation.TreeWalker.RawViewWalker.GetParent(ele);
+	}
+	return false;
+}
+
+var checkFeishuEditorFocused = function(){
+	var focused;
+	try{
+		focused = isFeishuEditorFocused();
+	}
+	catch(err){
+		debugLog("[飞书] 检测输入框异常:",err);
+		logError("检测飞书输入框",err);
+	}
+	return focused;
+}
+
+var mentionAssistant = function(attempt=1){
+	if(!mouseHook || mentioning || !isFeishu(::User32.GetForegroundWindow())) return;
+
+	if(!checkFeishuEditorFocused()){
+		if(attempt < 2){
+			mainForm.setTimeout(function(){
+				mentionAssistant(attempt + 1);
+			},FEISHU_RETRY_DELAY);
+		}
+		else debugLog("[飞书] 焦点不在输入框，已忽略本次三击");
+		return;
+	}
+
+	try{
+		var mentionText,autoConfirm,confirmDelay = loadFeishuConfig();
+		mentioning = true;
+		key.sendString(mentionText);
+		debugLog("[飞书] 已输入:",mentionText);
+		if(autoConfirm){
+			//等候选人列表弹出后再回车选中
+			mainForm.setTimeout(function(){
+				key.press("ENTER");
+				mentioning = false;
+				debugLog("[飞书] 已回车");
+			},confirmDelay);
+		}
+		else mentioning = false;
+		addRecord(time().format("%m-%d %H:%M:%S") + "丨" + mentionText);
+	}
+	catch(err){
+		mentioning = false;
+		debugLog("[飞书] 输入异常:",err);
+		logError("飞书@助手",err);
+		addRecord(time().format("%m-%d %H:%M:%S") + "丨@助手失败");
+	}
+}
+
+//钩子回调必须快速返回，只统计左键连击，检测和输入放到 setTimeout 里做
+var onMouseMessage = function(msg,x,y,mouseData,injected,flags,timeStamp){
+	if(injected || msg != 0x201/*_WM_LBUTTONDOWN*/) return;
+
+	//与上一次点击的间隔和位置都在系统双击容差内才算连击
+	var cx = ::User32.GetSystemMetrics(36/*_SM_CXDOUBLECLK*/) / 2;
+	var cy = ::User32.GetSystemMetrics(37/*_SM_CYDOUBLECLK*/) / 2;
+	if(lastClickTime
+		&& timeStamp - lastClickTime <= ::User32.GetDoubleClickTime()
+		&& math.abs(x - lastClickX) <= cx
+		&& math.abs(y - lastClickY) <= cy){
+		clickCount++;
+	}
+	else{
+		clickCount = 1;
+	}
+	lastClickTime,lastClickX,lastClickY = timeStamp,x,y;
+	//debugLog("[飞书][钩子] 左键按下 坐标:",x,y,"连击数:",clickCount);
+
+	if(clickCount >= 3){
+		clickCount = 0;
+		lastClickTime = null;
+		//debugLog("[飞书][钩子] 检测到三击");
+		if(isFeishu(::User32.GetForegroundWindow())){
+			mainForm.setTimeout(mentionAssistant,FEISHU_CLICK_DELAY);
+		}
+	}
+}
+
+var startFeishuMention = function(){
+	var newHook;
+	try{
+		newHook = mouse.hook();
+		if(!newHook._hhk) error("鼠标钩子创建失败");
+		newHook.proc = onMouseMessage;
+		clickCount = 0;
+		lastClickTime = null;
+		mouseHook = newHook;
+		setToggleState(mainForm.feishuToggle,true);
+		debugLog("[飞书] 已开始");
+	}
+	catch(err){
+		if(newHook && newHook._hhk) unhookWindowsHookEx(newHook._hhk);
+		mouseHook = null;
+		setToggleState(mainForm.feishuToggle,false);
+		debugLog("[飞书] 启动失败:",err);
+		logError("启动飞书@助手",err);
+		addRecord(time().format("%m-%d %H:%M:%S") + "丨飞书启用失败");
+	}
+}
+
+var stopFeishuMention = function(){
+	if(mouseHook){
+		var currentHook = mouseHook;
+		mouseHook = null;
+		try{
+			//mouse.hook 自带的 close 取不到钩子句柄，这里直接卸载
+			unhookWindowsHookEx(currentHook._hhk);
+			currentHook._hhk = null;
+		}
+		catch(err){
+			debugLog("[飞书] 停止失败:",err);
+			logError("停止飞书@助手",err);
+		}
+	}
+	setToggleState(mainForm.feishuToggle,false);
+	debugLog("[飞书] 已停止");
+}
+
+mainForm.feishuToggle.oncommand = function(){
+	if(mouseHook) stopFeishuMention();
+	else startFeishuMention();
 }
 
 mainForm.onClose = function(){
@@ -292,6 +511,7 @@ mainForm.onClose = function(){
 
 mainForm.onDestroy = function(){
 	stopListening();
+	stopFeishuMention();
 	try{
 		tray.delete();
 	}

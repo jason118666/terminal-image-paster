@@ -70,6 +70,7 @@ setToggleState(mainForm.feishuToggle,false);
 
 import key.hotkey;
 import key;
+import mouse;
 import mouse.hook;
 import JSON;
 import System.Windows.Automation.3;
@@ -365,6 +366,8 @@ var mouseHook;
 //输入与回车尚未走完时为 true，期间的三击一律忽略，避免重叠触发导致多按回车
 var mentioning = false;
 var clickCount = 0;
+//第三击的按下被吞掉后，为 true 表示还要吞掉对应的抬起
+var swallowUp = false;
 var lastClickTime,lastClickX,lastClickY;
 
 //焦点可能落在输入框内部的子节点上，所以从焦点元素向上最多找 5 层
@@ -392,46 +395,69 @@ var checkFeishuEditorFocused = function(){
 	return focused;
 }
 
-var mentionAssistant = function(attempt=1){
+//三击会让飞书选中整段文字，直接输入会把原内容替换掉。
+//所以先等双击判定时间过去，再在原点击位置补一次单击，把选区折叠成光标，然后才输入
+var insertMention = function(x,y){
+	mentioning = true;
+	mainForm.setTimeout(function(){
+		try{
+			if(!mouseHook || !isFeishu(::User32.GetForegroundWindow())){
+				mentioning = false;
+				return;
+			}
+
+			var ox,oy = mouse.getPos();
+			mouse.click(x,y,true);
+			mouse.setPos(ox,oy);
+
+			var mentionText,autoConfirm,confirmDelay = loadFeishuConfig();
+			key.sendString(mentionText);
+			debugLog("[飞书] 已输入:",mentionText);
+			if(autoConfirm){
+				//等候选人列表弹出后再回车选中
+				mainForm.setTimeout(function(){
+					key.press("ENTER");
+					mentioning = false;
+					debugLog("[飞书] 已回车");
+				},confirmDelay);
+			}
+			else mentioning = false;
+			addRecord(time().format("%m-%d %H:%M:%S") + "丨" + mentionText);
+		}
+		catch(err){
+			mentioning = false;
+			debugLog("[飞书] 输入异常:",err);
+			logError("飞书@助手",err);
+			addRecord(time().format("%m-%d %H:%M:%S") + "丨@助手失败");
+		}
+	},::User32.GetDoubleClickTime() + 60);
+}
+
+var mentionAssistant = function(x,y,attempt=1){
 	if(!mouseHook || mentioning || !isFeishu(::User32.GetForegroundWindow())) return;
 
 	if(!checkFeishuEditorFocused()){
 		if(attempt < 2){
 			mainForm.setTimeout(function(){
-				mentionAssistant(attempt + 1);
+				mentionAssistant(x,y,attempt + 1);
 			},FEISHU_RETRY_DELAY);
 		}
 		else debugLog("[飞书] 焦点不在输入框，已忽略本次三击");
 		return;
 	}
 
-	try{
-		var mentionText,autoConfirm,confirmDelay = loadFeishuConfig();
-		mentioning = true;
-		key.sendString(mentionText);
-		debugLog("[飞书] 已输入:",mentionText);
-		if(autoConfirm){
-			//等候选人列表弹出后再回车选中
-			mainForm.setTimeout(function(){
-				key.press("ENTER");
-				mentioning = false;
-				debugLog("[飞书] 已回车");
-			},confirmDelay);
-		}
-		else mentioning = false;
-		addRecord(time().format("%m-%d %H:%M:%S") + "丨" + mentionText);
-	}
-	catch(err){
-		mentioning = false;
-		debugLog("[飞书] 输入异常:",err);
-		logError("飞书@助手",err);
-		addRecord(time().format("%m-%d %H:%M:%S") + "丨@助手失败");
-	}
+	insertMention(x,y);
 }
 
 //钩子回调必须快速返回，只统计左键连击，检测和输入放到 setTimeout 里做
 var onMouseMessage = function(msg,x,y,mouseData,injected,flags,timeStamp){
-	if(injected || msg != 0x201/*_WM_LBUTTONDOWN*/) return;
+	if(injected) return;
+	//被吞掉的第三击的抬起消息也要吞掉，否则飞书只收到抬起
+	if(msg == 0x202/*_WM_LBUTTONUP*/ && swallowUp){
+		swallowUp = false;
+		return true;
+	}
+	if(msg != 0x201/*_WM_LBUTTONDOWN*/) return;
 
 	//与上一次点击的间隔和位置都在系统双击容差内才算连击
 	var cx = ::User32.GetSystemMetrics(36/*_SM_CXDOUBLECLK*/) / 2;
@@ -453,7 +479,14 @@ var onMouseMessage = function(msg,x,y,mouseData,injected,flags,timeStamp){
 		lastClickTime = null;
 		//debugLog("[飞书][钩子] 检测到三击");
 		if(isFeishu(::User32.GetForegroundWindow())){
-			mainForm.setTimeout(mentionAssistant,FEISHU_CLICK_DELAY);
+			mainForm.setTimeout(function(){
+				mentionAssistant(x,y);
+			},FEISHU_CLICK_DELAY);
+			//焦点在输入框时吞掉第三击，飞书只会当成双击，不会触发三击全选整段内容
+			if(!mentioning && checkFeishuEditorFocused()){
+				swallowUp = true;
+				return true;
+			}
 		}
 	}
 }
@@ -466,6 +499,7 @@ var startFeishuMention = function(){
 		newHook.proc = onMouseMessage;
 		clickCount = 0;
 		lastClickTime = null;
+		swallowUp = false;
 		mouseHook = newHook;
 		setToggleState(mainForm.feishuToggle,true);
 		debugLog("[飞书] 已开始");
